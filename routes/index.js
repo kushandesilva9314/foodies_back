@@ -3,16 +3,16 @@ const router = express.Router();
 
 // Import route modules
 const testRoutes = require('./testRoutes');
-// const menuRoutes = require('./menuRoutes');
-// const categoryRoutes = require('./categoryRoutes');
-// const productRoutes = require('./productRoutes');
+const menuRoutes = require('./menuRoutes');
+const categoryRoutes = require('./categoryRoutes');
+const productRoutes = require('./productRoutes');
 
-// Test routes (can be removed in production)
+// Test routes 
 router.use('/', testRoutes);
 
-// Main routes (uncomment when ready)
-// router.use('/menus', menuRoutes);
-// router.use('/categories', categoryRoutes);
-// router.use('/products', productRoutes);
+// Main routes 
+router.use('/menus', menuRoutes);
+router.use('/categories', categoryRoutes);
+router.use('/products', productRoutes);
 
 module.exports = router;
