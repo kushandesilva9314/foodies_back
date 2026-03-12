@@ -100,6 +100,18 @@ const UserModel = {
     if (error) throw error;
   },
 
+  /**
+ * Update user password
+ */
+updatePassword: async (email, hashedPassword) => {
+  const { error } = await supabase
+    .from('users')
+    .update({ password: hashedPassword })
+    .eq('email', email.toLowerCase());
+
+  if (error) throw error;
+},
+
 };
 
 module.exports = UserModel;

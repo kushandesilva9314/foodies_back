@@ -1,127 +1,170 @@
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { body } = require('express-validator');
-const UserModel = require('../models/userModel');
-const OTPModel = require('../models/otpModel');
-const { sendOTPEmail } = require('../services/otpEmailService');
-const { generateOTP, getOTPExpiry } = require('../utils/otpUtils');
-const { sendPasswordResetEmail } = require('../services/passwordResetEmailService')
-const PasswordResetModel = require('../models/passwordResetModel');
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { body } = require("express-validator");
+const UserModel = require("../models/userModel");
+const OTPModel = require("../models/otpModel");
+const { sendOTPEmail } = require("../services/otpEmailService");
+const { generateOTP, getOTPExpiry } = require("../utils/otpUtils");
+const {
+  sendPasswordResetEmail,
+} = require("../services/passwordResetEmailService");
+const PasswordResetModel = require("../models/passwordResetModel");
+const RefreshTokenModel = require("../models/refreshTokenModel");
+const {
+  generateAccessToken,
+  generateRefreshToken,
+  getRefreshTokenExpiry,
+} = require("../utils/tokenUtils");
 
 // ─── Validation Rules ─────────────────────────────────────────────────────────
 
 const registerValidation = [
-  body('name')
+  body("name")
     .trim()
-    .notEmpty().withMessage('Full name is required')
-    .isLength({ min: 2, max: 50 }).withMessage('Name must be 2–50 characters')
-    .matches(/^[a-zA-Z\s]+$/).withMessage('Name can only contain letters and spaces'),
+    .notEmpty()
+    .withMessage("Full name is required")
+    .isLength({ min: 2, max: 50 })
+    .withMessage("Name must be 2–50 characters")
+    .matches(/^[a-zA-Z\s]+$/)
+    .withMessage("Name can only contain letters and spaces"),
 
-  body('email')
+  body("email")
     .trim()
-    .notEmpty().withMessage('Email is required')
-    .isEmail().withMessage('Please enter a valid email address')
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Please enter a valid email address")
     .normalizeEmail(),
 
-  body('mobile')
-  .trim()
-  .notEmpty().withMessage('Mobile number is required')
-  .matches(/^[0-9]{10}$/).withMessage('Mobile must be exactly 10 digits')
-  .matches(/^[0789]/).withMessage('Mobile must start with 0, 7, 8, or 9'),
+  body("mobile")
+    .trim()
+    .notEmpty()
+    .withMessage("Mobile number is required")
+    .matches(/^[0-9]{10}$/)
+    .withMessage("Mobile must be exactly 10 digits")
+    .matches(/^[0789]/)
+    .withMessage("Mobile must start with 0, 7, 8, or 9"),
 
-  body('password')
-    .notEmpty().withMessage('Password is required')
-    .isLength({ min: 8, max: 128 }).withMessage('Password must be 8–128 characters')
-    .matches(/(?=.*[a-z])/).withMessage('Password must contain a lowercase letter')
-    .matches(/(?=.*[A-Z])/).withMessage('Password must contain an uppercase letter')
-    .matches(/(?=.*\d)/).withMessage('Password must contain a number')
-    .matches(/(?=.*[@$!%*?&])/).withMessage('Password must contain a special character (@$!%*?&)'),
+  body("password")
+    .notEmpty()
+    .withMessage("Password is required")
+    .isLength({ min: 8, max: 128 })
+    .withMessage("Password must be 8–128 characters")
+    .matches(/(?=.*[a-z])/)
+    .withMessage("Password must contain a lowercase letter")
+    .matches(/(?=.*[A-Z])/)
+    .withMessage("Password must contain an uppercase letter")
+    .matches(/(?=.*\d)/)
+    .withMessage("Password must contain a number")
+    .matches(/(?=.*[@$!%*?&])/)
+    .withMessage("Password must contain a special character (@$!%*?&)"),
 ];
 
 const verifyOtpValidation = [
-  body('email')
+  body("email")
     .trim()
-    .notEmpty().withMessage('Email is required')
-    .isEmail().withMessage('Invalid email address')
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Invalid email address")
     .normalizeEmail(),
 
-  body('otp')
+  body("otp")
     .trim()
-    .notEmpty().withMessage('OTP is required')
-    .matches(/^\d{6}$/).withMessage('OTP must be a 6-digit number'),
+    .notEmpty()
+    .withMessage("OTP is required")
+    .matches(/^\d{6}$/)
+    .withMessage("OTP must be a 6-digit number"),
 ];
 
 const resendOtpValidation = [
-  body('email')
+  body("email")
     .trim()
-    .notEmpty().withMessage('Email is required')
-    .isEmail().withMessage('Invalid email address')
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Invalid email address")
     .normalizeEmail(),
 ];
 
 const loginValidation = [
-  body('email')
+  body("email")
     .trim()
-    .notEmpty().withMessage('Email is required')
-    .isEmail().withMessage('Please enter a valid email address')
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Please enter a valid email address")
     .normalizeEmail(),
 
-  body('password')
-    .notEmpty().withMessage('Password is required')
-    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+  body("password")
+    .notEmpty()
+    .withMessage("Password is required")
+    .isLength({ min: 8 })
+    .withMessage("Password must be at least 8 characters"),
+
+  body("rememberMe")
+    .optional()
+    .isBoolean()
+    .withMessage("rememberMe must be a boolean"),
 ];
 
 const forgotPasswordValidation = [
-  body('email')
+  body("email")
     .trim()
-    .notEmpty().withMessage('Email is required')
-    .isEmail().withMessage('Please enter a valid email address')
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Please enter a valid email address")
     .normalizeEmail(),
 ];
 
 const verifyResetOtpValidation = [
-  body('email')
+  body("email")
     .trim()
-    .notEmpty().withMessage('Email is required')
-    .isEmail().withMessage('Invalid email address')
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Invalid email address")
     .normalizeEmail(),
 
-  body('otp')
+  body("otp")
     .trim()
-    .notEmpty().withMessage('OTP is required')
-    .matches(/^\d{6}$/).withMessage('OTP must be a 6-digit number'),
+    .notEmpty()
+    .withMessage("OTP is required")
+    .matches(/^\d{6}$/)
+    .withMessage("OTP must be a 6-digit number"),
 ];
 
 const resetPasswordValidation = [
-  body('email')
+  body("email")
     .trim()
-    .notEmpty().withMessage('Email is required')
-    .isEmail().withMessage('Invalid email address')
+    .notEmpty()
+    .withMessage("Email is required")
+    .isEmail()
+    .withMessage("Invalid email address")
     .normalizeEmail(),
 
-  body('otp')
+  body("otp")
     .trim()
-    .notEmpty().withMessage('OTP is required')
-    .matches(/^\d{6}$/).withMessage('OTP must be a 6-digit number'),
+    .notEmpty()
+    .withMessage("OTP is required")
+    .matches(/^\d{6}$/)
+    .withMessage("OTP must be a 6-digit number"),
 
-  body('newPassword')
-    .notEmpty().withMessage('New password is required')
-    .isLength({ min: 8, max: 128 }).withMessage('Password must be 8–128 characters')
-    .matches(/(?=.*[a-z])/).withMessage('Password must contain a lowercase letter')
-    .matches(/(?=.*[A-Z])/).withMessage('Password must contain an uppercase letter')
-    .matches(/(?=.*\d)/).withMessage('Password must contain a number')
-    .matches(/(?=.*[@$!%*?&])/).withMessage('Password must contain a special character (@$!%*?&)'),
+  body("newPassword")
+    .notEmpty()
+    .withMessage("New password is required")
+    .isLength({ min: 8, max: 128 })
+    .withMessage("Password must be 8–128 characters")
+    .matches(/(?=.*[a-z])/)
+    .withMessage("Password must contain a lowercase letter")
+    .matches(/(?=.*[A-Z])/)
+    .withMessage("Password must contain an uppercase letter")
+    .matches(/(?=.*\d)/)
+    .withMessage("Password must contain a number")
+    .matches(/(?=.*[@$!%*?&])/)
+    .withMessage("Password must contain a special character (@$!%*?&)"),
 ];
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const generateToken = (userId) => {
-  return jwt.sign(
-    { userId },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-  );
-};
 
 // ─── Controllers ──────────────────────────────────────────────────────────────
 
@@ -139,7 +182,7 @@ const register = async (req, res, next) => {
       if (existingUser.is_verified) {
         return res.status(409).json({
           success: false,
-          message: 'An account with this email already exists',
+          message: "An account with this email already exists",
         });
       }
       // Unverified — delete to allow re-registration
@@ -154,7 +197,7 @@ const register = async (req, res, next) => {
       name: name.trim(),
       email,
       password: hashedPassword,
-      mobile: mobile.replace(/\s/g, ''),
+      mobile: mobile.replace(/\s/g, ""),
     });
 
     // 4. Clean up old OTPs
@@ -177,7 +220,6 @@ const register = async (req, res, next) => {
         name: newUser.name,
       },
     });
-
   } catch (error) {
     next(error);
   }
@@ -196,7 +238,7 @@ const verifyOTP = async (req, res, next) => {
     if (!otpRecord) {
       return res.status(400).json({
         success: false,
-        message: 'No active OTP found. Please request a new one.',
+        message: "No active OTP found. Please request a new one.",
       });
     }
 
@@ -205,7 +247,7 @@ const verifyOTP = async (req, res, next) => {
       await OTPModel.deleteByEmail(email);
       return res.status(429).json({
         success: false,
-        message: 'Too many incorrect attempts. Please request a new OTP.',
+        message: "Too many incorrect attempts. Please request a new OTP.",
       });
     }
 
@@ -214,7 +256,7 @@ const verifyOTP = async (req, res, next) => {
       await OTPModel.deleteByEmail(email);
       return res.status(400).json({
         success: false,
-        message: 'OTP has expired. Please request a new one.',
+        message: "OTP has expired. Please request a new one.",
       });
     }
 
@@ -238,24 +280,41 @@ const verifyOTP = async (req, res, next) => {
     await OTPModel.deleteByEmail(email);
 
     // 8. Generate JWT
-    const token = generateToken(verifiedUser.id);
+    const accessToken = generateAccessToken(verifiedUser.id);
+    const newRefreshToken = generateRefreshToken();
+    const refreshTokenExpiry = getRefreshTokenExpiry(false);
+
+    await RefreshTokenModel.create({
+      userId: verifiedUser.id,
+      token: newRefreshToken,
+      rememberMe: false,
+      expiresAt: refreshTokenExpiry,
+    });
+
+    // Set refresh token as httpOnly cookie
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      expires: refreshTokenExpiry,
+    });
 
     return res.status(200).json({
       success: true,
-      message: 'Account verified successfully! Welcome to Foodies.',
+      message: "Account verified successfully! Welcome to Foodies.",
       data: {
-        token,
+        accessToken,
+        rememberMe: false,
         user: {
           id: verifiedUser.id,
           name: verifiedUser.name,
           email: verifiedUser.email,
           mobile: verifiedUser.mobile,
-          profile_photo: verifiedUser.profile_photo,  // null at registration
-          role: verifiedUser.role,                     // 'customer' by default
+          profile_photo: verifiedUser.profile_photo,
+          role: verifiedUser.role,
         },
       },
     });
-
   } catch (error) {
     next(error);
   }
@@ -274,14 +333,14 @@ const resendOTP = async (req, res, next) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'No registration found for this email.',
+        message: "No registration found for this email.",
       });
     }
 
     if (user.is_verified) {
       return res.status(400).json({
         success: false,
-        message: 'This account is already verified.',
+        message: "This account is already verified.",
       });
     }
 
@@ -289,7 +348,8 @@ const resendOTP = async (req, res, next) => {
     const recentOtp = await OTPModel.findLatestByEmail(email);
 
     if (recentOtp) {
-      const secondsSinceSent = (Date.now() - new Date(recentOtp.created_at).getTime()) / 1000;
+      const secondsSinceSent =
+        (Date.now() - new Date(recentOtp.created_at).getTime()) / 1000;
       if (secondsSinceSent < 60) {
         const waitSeconds = Math.ceil(60 - secondsSinceSent);
         return res.status(429).json({
@@ -315,7 +375,6 @@ const resendOTP = async (req, res, next) => {
       success: true,
       message: `A new verification code has been sent to ${email}`,
     });
-
   } catch (error) {
     next(error);
   }
@@ -326,45 +385,58 @@ const resendOTP = async (req, res, next) => {
  */
 const login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, rememberMe } = req.body;
 
-    // 1. Find user by email
     const user = await UserModel.findByEmail(email);
 
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password',
+        message: "Invalid email or password",
       });
     }
 
-    // 2. Check if account is verified
     if (!user.is_verified) {
       return res.status(403).json({
         success: false,
-        message: 'Account not verified. Please verify your email first.',
+        message: "Account not verified. Please verify your email first.",
       });
     }
 
-    // 3. Compare password
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password',
+        message: "Invalid email or password",
       });
     }
 
-    // 4. Generate JWT
-    const token = generateToken(user.id);
+    const accessToken = generateAccessToken(user.id);
+    const newRefreshToken = generateRefreshToken();
+    const refreshTokenExpiry = getRefreshTokenExpiry(rememberMe);
 
-    // 5. Return token + user + redirect based on role
+    await RefreshTokenModel.create({
+      userId: user.id,
+      token: newRefreshToken,
+      rememberMe: rememberMe || false,
+      expiresAt: refreshTokenExpiry,
+    });
+
+    // Set refresh token as httpOnly cookie
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      expires: refreshTokenExpiry,
+    });
+
     return res.status(200).json({
       success: true,
-      message: 'Login successful! Welcome back.',
+      message: "Login successful! Welcome back.",
       data: {
-        token,
+        accessToken,
+        rememberMe: rememberMe || false,
         user: {
           id: user.id,
           name: user.name,
@@ -373,10 +445,9 @@ const login = async (req, res, next) => {
           profile_photo: user.profile_photo,
           role: user.role,
         },
-        redirectTo: user.role === 'admin' ? '/admin' : '/',
+        redirectTo: user.role === "admin" ? "/admin" : "/",
       },
     });
-
   } catch (error) {
     next(error);
   }
@@ -397,7 +468,8 @@ const forgotPassword = async (req, res, next) => {
     if (!user || !user.is_verified) {
       return res.status(200).json({
         success: true,
-        message: 'If this email is registered, you will receive a reset code shortly.',
+        message:
+          "If this email is registered, you will receive a reset code shortly.",
       });
     }
 
@@ -405,7 +477,8 @@ const forgotPassword = async (req, res, next) => {
     const recentOtp = await PasswordResetModel.findLatestByEmail(email);
 
     if (recentOtp) {
-      const secondsSinceSent = (Date.now() - new Date(recentOtp.created_at).getTime()) / 1000;
+      const secondsSinceSent =
+        (Date.now() - new Date(recentOtp.created_at).getTime()) / 1000;
       if (secondsSinceSent < 60) {
         const waitSeconds = Math.ceil(60 - secondsSinceSent);
         return res.status(429).json({
@@ -429,9 +502,9 @@ const forgotPassword = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      message: 'If this email is registered, you will receive a reset code shortly.',
+      message:
+        "If this email is registered, you will receive a reset code shortly.",
     });
-
   } catch (error) {
     next(error);
   }
@@ -451,7 +524,7 @@ const verifyResetOTP = async (req, res, next) => {
     if (!otpRecord) {
       return res.status(400).json({
         success: false,
-        message: 'No active reset code found. Please request a new one.',
+        message: "No active reset code found. Please request a new one.",
       });
     }
 
@@ -460,7 +533,7 @@ const verifyResetOTP = async (req, res, next) => {
       await PasswordResetModel.deleteByEmail(email);
       return res.status(429).json({
         success: false,
-        message: 'Too many incorrect attempts. Please request a new code.',
+        message: "Too many incorrect attempts. Please request a new code.",
       });
     }
 
@@ -469,13 +542,16 @@ const verifyResetOTP = async (req, res, next) => {
       await PasswordResetModel.deleteByEmail(email);
       return res.status(400).json({
         success: false,
-        message: 'Reset code has expired. Please request a new one.',
+        message: "Reset code has expired. Please request a new one.",
       });
     }
 
     // 4. Verify OTP
     if (otpRecord.otp !== otp) {
-      await PasswordResetModel.incrementAttempts(otpRecord.id, otpRecord.attempts);
+      await PasswordResetModel.incrementAttempts(
+        otpRecord.id,
+        otpRecord.attempts,
+      );
       const remainingAttempts = 4 - otpRecord.attempts;
       return res.status(400).json({
         success: false,
@@ -488,9 +564,8 @@ const verifyResetOTP = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      message: 'OTP verified successfully. You can now reset your password.',
+      message: "OTP verified successfully. You can now reset your password.",
     });
-
   } catch (error) {
     next(error);
   }
@@ -510,7 +585,7 @@ const resetPassword = async (req, res, next) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'User not found.',
+        message: "User not found.",
       });
     }
 
@@ -520,7 +595,7 @@ const resetPassword = async (req, res, next) => {
     if (activeOtp && !activeOtp.is_used) {
       return res.status(400).json({
         success: false,
-        message: 'Please verify your OTP before resetting password.',
+        message: "Please verify your OTP before resetting password.",
       });
     }
 
@@ -530,7 +605,7 @@ const resetPassword = async (req, res, next) => {
     if (isSamePassword) {
       return res.status(400).json({
         success: false,
-        message: 'New password cannot be the same as your current password.',
+        message: "New password cannot be the same as your current password.",
       });
     }
 
@@ -538,21 +613,16 @@ const resetPassword = async (req, res, next) => {
     const hashedPassword = await bcrypt.hash(newPassword, 12);
 
     // 5. Update password in DB
-    const { error } = await supabase
-      .from('users')
-      .update({ password: hashedPassword })
-      .eq('email', email.toLowerCase());
-
-    if (error) throw error;
+    await UserModel.updatePassword(email, hashedPassword);
 
     // 6. Clean up all reset OTPs
     await PasswordResetModel.deleteByEmail(email);
 
     return res.status(200).json({
       success: true,
-      message: 'Password reset successfully! You can now login with your new password.',
+      message:
+        "Password reset successfully! You can now login with your new password.",
     });
-
   } catch (error) {
     next(error);
   }
@@ -571,7 +641,8 @@ const resendResetOTP = async (req, res, next) => {
     if (!user || !user.is_verified) {
       return res.status(200).json({
         success: true,
-        message: 'If this email is registered, you will receive a reset code shortly.',
+        message:
+          "If this email is registered, you will receive a reset code shortly.",
       });
     }
 
@@ -579,7 +650,8 @@ const resendResetOTP = async (req, res, next) => {
     const recentOtp = await PasswordResetModel.findLatestByEmail(email);
 
     if (recentOtp) {
-      const secondsSinceSent = (Date.now() - new Date(recentOtp.created_at).getTime()) / 1000;
+      const secondsSinceSent =
+        (Date.now() - new Date(recentOtp.created_at).getTime()) / 1000;
       if (secondsSinceSent < 60) {
         const waitSeconds = Math.ceil(60 - secondsSinceSent);
         return res.status(429).json({
@@ -600,9 +672,145 @@ const resendResetOTP = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      message: 'A new reset code has been sent to your email.',
+      message: "A new reset code has been sent to your email.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/auth/refresh
+ * Get new access token using refresh token
+ */
+const refreshAccessToken = async (req, res, next) => {
+  try {
+    // Read from cookie instead of body
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(401).json({
+        success: false,
+        message: "Refresh token is required.",
+      });
+    }
+
+    const storedToken = await RefreshTokenModel.findByToken(refreshToken);
+
+    if (!storedToken) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid refresh token. Please login again.",
+      });
+    }
+
+    if (new Date() > new Date(storedToken.expires_at)) {
+      await RefreshTokenModel.deleteByToken(refreshToken);
+      res.clearCookie("refreshToken");
+      return res.status(401).json({
+        success: false,
+        message: "Refresh token expired. Please login again.",
+      });
+    }
+
+    const user = await UserModel.findById(storedToken.user_id);
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "User no longer exists.",
+      });
+    }
+
+    // Rotation — delete old refresh token
+    await RefreshTokenModel.deleteByToken(refreshToken);
+
+    // Generate new tokens
+    const accessToken = generateAccessToken(user.id);
+    const newRefreshToken = generateRefreshToken();
+    const refreshTokenExpiry = getRefreshTokenExpiry(storedToken.remember_me);
+
+    await RefreshTokenModel.create({
+      userId: user.id,
+      token: newRefreshToken,
+      rememberMe: storedToken.remember_me,
+      expiresAt: refreshTokenExpiry,
     });
 
+    // Set new refresh token as httpOnly cookie
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      expires: refreshTokenExpiry,
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        accessToken,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          mobile: user.mobile,
+          profile_photo: user.profile_photo,
+          role: user.role,
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/auth/logout
+ * Invalidate refresh token
+ */
+const logout = async (req, res, next) => {
+  try {
+    // Read from cookie
+    const refreshToken = req.cookies.refreshToken;
+
+    if (refreshToken) {
+      await RefreshTokenModel.deleteByToken(refreshToken);
+    }
+
+    // Clear the cookie
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Logged out successfully.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+/**
+ * GET /api/auth/me
+ * Get current logged in user
+ */
+const getMe = async (req, res, next) => {
+  try {
+    return res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          id: req.user.id,
+          name: req.user.name,
+          email: req.user.email,
+          mobile: req.user.mobile,
+          profile_photo: req.user.profile_photo,
+          role: req.user.role,
+        },
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -617,6 +825,8 @@ module.exports = {
   resendOtpValidation,
   login,
   loginValidation,
+  refreshAccessToken,
+  logout,
   forgotPassword,
   forgotPasswordValidation,
   verifyResetOTP,
@@ -624,5 +834,5 @@ module.exports = {
   resetPassword,
   resetPasswordValidation,
   resendResetOTP,
-  resendOtpValidation,
+  getMe,
 };

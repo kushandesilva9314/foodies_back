@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const validate = require('../middlewares/validate');
+const { protect } = require('../middlewares/authMiddleware');
 
 const upload = multer();
 
@@ -15,6 +16,8 @@ const {
   resendOtpValidation,
   login,
   loginValidation,
+  refreshAccessToken,
+  logout,
   forgotPassword,
   forgotPasswordValidation,
   verifyResetOTP,
@@ -22,13 +25,13 @@ const {
   resetPassword,
   resetPasswordValidation,
   resendResetOTP,
+  getMe,
 } = require('../controllers/authController');
 
-// ─── Rate Limiters ────────────────────────────────────────────────────────────
-
+// Rate Limiters
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,                   // max 10 login attempts per 15 min
+  windowMs: 15 * 60 * 1000,
+  max: 10,
   message: {
     success: false,
     message: 'Too many login attempts. Please try again after 15 minutes.',
@@ -38,8 +41,8 @@ const loginLimiter = rateLimit({
 });
 
 const forgotPasswordLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5,                    // max 5 forgot password requests per hour
+  windowMs: 60 * 60 * 1000,
+  max: 5,
   message: {
     success: false,
     message: 'Too many password reset requests. Please try again after 1 hour.',
@@ -48,8 +51,6 @@ const forgotPasswordLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// ─── Auth Routes ──────────────────────────────────────────────────────────────
-
 // Registration
 router.post('/register', upload.none(), validate(registerValidation), register);
 router.post('/verify-otp', validate(verifyOtpValidation), verifyOTP);
@@ -57,6 +58,13 @@ router.post('/resend-otp', validate(resendOtpValidation), resendOTP);
 
 // Login
 router.post('/login', loginLimiter, validate(loginValidation), login);
+
+// Token management
+router.post('/refresh', refreshAccessToken);
+router.post('/logout', logout);
+
+// Protected
+router.get('/me', protect, getMe);
 
 // Forgot Password
 router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordValidation), forgotPassword);
