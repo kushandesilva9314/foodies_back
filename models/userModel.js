@@ -22,7 +22,7 @@ const UserModel = {
   findById: async (id) => {
     const { data, error } = await supabase
       .from('users')
-      .select('id, name, email, mobile, profile_photo, role, is_verified, created_at')
+      .select('id, name, email, mobile, profile_photo, role, is_verified, is_mobile_verified, created_at')
       .eq('id', id)
       .single();
 
@@ -42,11 +42,12 @@ const UserModel = {
         email: email.toLowerCase(),
         password,
         mobile,
-        profile_photo: null,       // set when user updates profile later
-        role: 'customer',          // default role
+        profile_photo: null,
+        role: 'customer',
         is_verified: false,
+        is_mobile_verified: false,
       })
-      .select('id, name, email, mobile, profile_photo, role')
+      .select('id, name, email, mobile, profile_photo, role, is_mobile_verified')
       .single();
 
     if (error) throw error;
@@ -54,14 +55,29 @@ const UserModel = {
   },
 
   /**
-   * Mark user as verified
+   * Mark user email as verified
    */
   markAsVerified: async (email) => {
     const { data, error } = await supabase
       .from('users')
       .update({ is_verified: true })
       .eq('email', email.toLowerCase())
-      .select('id, name, email, mobile, profile_photo, role')
+      .select('id, name, email, mobile, profile_photo, role, is_mobile_verified')
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * Mark mobile as verified
+   */
+  markMobileAsVerified: async (id) => {
+    const { data, error } = await supabase
+      .from('users')
+      .update({ is_mobile_verified: true })
+      .eq('id', id)
+      .select('id, name, email, mobile, profile_photo, role, is_mobile_verified')
       .single();
 
     if (error) throw error;
@@ -81,7 +97,7 @@ const UserModel = {
       .from('users')
       .update(updateData)
       .eq('id', id)
-      .select('id, name, email, mobile, profile_photo, role')
+      .select('id, name, email, mobile, profile_photo, role, is_mobile_verified')
       .single();
 
     if (error) throw error;
@@ -101,16 +117,42 @@ const UserModel = {
   },
 
   /**
- * Update user password
- */
-updatePassword: async (email, hashedPassword) => {
-  const { error } = await supabase
-    .from('users')
-    .update({ password: hashedPassword })
-    .eq('email', email.toLowerCase());
+   * Update user password
+   */
+  updatePassword: async (email, hashedPassword) => {
+    const { error } = await supabase
+      .from('users')
+      .update({ password: hashedPassword })
+      .eq('email', email.toLowerCase());
 
-  if (error) throw error;
-},
+    if (error) throw error;
+  },
+
+  /**
+   * Get all customers (excludes admins)
+   */
+  getAllCustomers: async () => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, name, email, mobile, profile_photo, role, is_verified, is_mobile_verified, created_at')
+      .eq('role', 'customer')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * Delete user by ID
+   */
+  deleteById: async (id) => {
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+  },
 
 };
 

@@ -312,6 +312,7 @@ const verifyOTP = async (req, res, next) => {
           mobile: verifiedUser.mobile,
           profile_photo: verifiedUser.profile_photo,
           role: verifiedUser.role,
+          is_mobile_verified: verifiedUser.is_mobile_verified,
         },
       },
     });
@@ -444,6 +445,7 @@ const login = async (req, res, next) => {
           mobile: user.mobile,
           profile_photo: user.profile_photo,
           role: user.role,
+          is_mobile_verified: user.is_mobile_verified,
         },
         redirectTo: user.role === "admin" ? "/admin" : "/",
       },
@@ -756,6 +758,7 @@ const refreshAccessToken = async (req, res, next) => {
           mobile: user.mobile,
           profile_photo: user.profile_photo,
           role: user.role,
+          is_mobile_verified: user.is_mobile_verified,
         },
       },
     });
@@ -808,6 +811,7 @@ const getMe = async (req, res, next) => {
           mobile: req.user.mobile,
           profile_photo: req.user.profile_photo,
           role: req.user.role,
+          is_mobile_verified: req.user.is_mobile_verified,
         },
       },
     });
