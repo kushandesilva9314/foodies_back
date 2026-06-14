@@ -41,7 +41,7 @@ const protect = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         message: 'Access token expired.',
-        code: 'TOKEN_EXPIRED', // frontend checks this code to trigger refresh
+        code: 'TOKEN_EXPIRED', 
       });
     }
 
