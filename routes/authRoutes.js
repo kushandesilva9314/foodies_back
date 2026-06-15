@@ -18,6 +18,7 @@ const {
   loginValidation,
   refreshAccessToken,
   logout,
+  logoutAllDevices,
   forgotPassword,
   forgotPasswordValidation,
   verifyResetOTP,
@@ -26,6 +27,10 @@ const {
   resetPasswordValidation,
   resendResetOTP,
   getMe,
+ updateProfile,
+  updateProfileValidation,
+  changePassword,
+  changePasswordValidation,
 } = require('../controllers/authController');
 
 // Rate Limiters
@@ -65,6 +70,15 @@ router.post('/logout', logout);
 
 // Protected
 router.get('/me', protect, getMe);
+
+// Profile (Account Settings)
+router.put('/profile', protect, upload.single('profile_photo'), validate(updateProfileValidation), updateProfile);
+
+// Change password (logged-in user, requires current password)
+router.put('/change-password', protect, validate(changePasswordValidation), changePassword);
+
+// Sign out from ALL devices (current device included — deletes every refresh token)
+router.post('/logout-all', protect, logoutAllDevices);
 
 // Forgot Password
 router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordValidation), forgotPassword);

@@ -9,6 +9,7 @@ const {
   sendPasswordResetEmail,
 } = require("../services/passwordResetEmailService");
 const PasswordResetModel = require("../models/passwordResetModel");
+const { uploadImage, deleteImage } = require("../utils/imageUpload");
 const RefreshTokenModel = require("../models/refreshTokenModel");
 const {
   generateAccessToken,
@@ -150,6 +151,46 @@ const resetPasswordValidation = [
     .withMessage("OTP is required")
     .matches(/^\d{6}$/)
     .withMessage("OTP must be a 6-digit number"),
+
+  body("newPassword")
+    .notEmpty()
+    .withMessage("New password is required")
+    .isLength({ min: 8, max: 128 })
+    .withMessage("Password must be 8–128 characters")
+    .matches(/(?=.*[a-z])/)
+    .withMessage("Password must contain a lowercase letter")
+    .matches(/(?=.*[A-Z])/)
+    .withMessage("Password must contain an uppercase letter")
+    .matches(/(?=.*\d)/)
+    .withMessage("Password must contain a number")
+    .matches(/(?=.*[@$!%*?&])/)
+    .withMessage("Password must contain a special character (@$!%*?&)"),
+];
+
+const updateProfileValidation = [
+  body("name")
+    .trim()
+    .notEmpty()
+    .withMessage("Full name is required")
+    .isLength({ min: 2, max: 50 })
+    .withMessage("Name must be 2–50 characters")
+    .matches(/^[a-zA-Z\s]+$/)
+    .withMessage("Name can only contain letters and spaces"),
+
+  body("mobile")
+    .trim()
+    .notEmpty()
+    .withMessage("Mobile number is required")
+    .matches(/^[0-9]{10}$/)
+    .withMessage("Mobile must be exactly 10 digits")
+    .matches(/^[0789]/)
+    .withMessage("Mobile must start with 0, 7, 8, or 9"),
+];
+
+const changePasswordValidation = [
+  body("currentPassword")
+    .notEmpty()
+    .withMessage("Current password is required"),
 
   body("newPassword")
     .notEmpty()
@@ -820,6 +861,151 @@ const getMe = async (req, res, next) => {
   }
 };
 
+/**
+ * PUT /api/auth/profile
+ * Update logged-in user's profile (name, mobile, profile photo)
+ * If the mobile number is changed, is_mobile_verified is reset to false
+ */
+const updateProfile = async (req, res, next) => {
+  let uploadedImageUrl = null;
+
+  try {
+    const { name, mobile, removePhoto } = req.body;
+    const file = req.file;
+    const currentUser = req.user; // from protect middleware
+
+    const sanitizedMobile = mobile.replace(/\s/g, "");
+
+    const updateData = {
+      name: name.trim(),
+      mobile: sanitizedMobile,
+    };
+
+    // ── If mobile number is being changed, mobile must be re-verified ──
+    const mobileChanged = sanitizedMobile !== currentUser.mobile;
+    if (mobileChanged) {
+      updateData.is_mobile_verified = false;
+    }
+
+    // ── Handle profile photo (new upload takes priority over removal) ──
+    const wantsRemovePhoto = removePhoto === "true" || removePhoto === true;
+
+    if (file) {
+      uploadedImageUrl = await uploadImage(
+        file.buffer,
+        file.originalname,
+        file.mimetype,
+      );
+      updateData.profile_photo = uploadedImageUrl;
+    } else if (wantsRemovePhoto) {
+      updateData.profile_photo = null;
+    }
+
+    // ── Persist changes ──
+    const updatedUser = await UserModel.updateProfile(currentUser.id, updateData);
+
+    // ── Clean up old photo from storage if it was replaced or removed ──
+    if ((file || wantsRemovePhoto) && currentUser.profile_photo) {
+      await deleteImage(currentUser.profile_photo);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: mobileChanged
+        ? "Profile updated successfully. Your mobile number is no longer verified."
+        : "Profile updated successfully.",
+      data: {
+        user: updatedUser,
+      },
+    });
+  } catch (error) {
+    // If a new image was uploaded but the DB update failed, clean it up
+    if (uploadedImageUrl) {
+      await deleteImage(uploadedImageUrl);
+    }
+    next(error);
+  }
+};
+
+/**
+ * POST /api/auth/logout-all
+ * Sign out from ALL devices/sessions (deletes every refresh token for the user)
+ * This also ends the current session, since its refresh token is removed too.
+ */
+const logoutAllDevices = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+
+    // Remove every refresh token belonging to this user — invalidates all sessions
+    await RefreshTokenModel.deleteAllByUserId(userId);
+
+    // The current device's refresh cookie is now invalid as well, so clear it
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "You have been signed out from all devices.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/auth/change-password
+ * Change password for the logged-in user (requires current password)
+ */
+const changePassword = async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    // req.user (from protect) doesn't include the password hash — fetch full record
+    const user = await UserModel.findByEmail(req.user.email);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    // 1. Verify current password
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+
+    if (!isCurrentPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect.",
+      });
+    }
+
+    // 2. New password must differ from current
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+
+    if (isSamePassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password cannot be the same as your current password.",
+      });
+    }
+
+    // 3. Hash & update
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+    await UserModel.updatePassword(user.email, hashedPassword);
+
+    return res.status(200).json({
+      success: true,
+      message: "Password changed successfully.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   register,
   registerValidation,
@@ -831,6 +1017,7 @@ module.exports = {
   loginValidation,
   refreshAccessToken,
   logout,
+  logoutAllDevices,
   forgotPassword,
   forgotPasswordValidation,
   verifyResetOTP,
@@ -839,4 +1026,8 @@ module.exports = {
   resetPasswordValidation,
   resendResetOTP,
   getMe,
+  updateProfile,
+  updateProfileValidation,
+  changePassword,
+  changePasswordValidation,
 };

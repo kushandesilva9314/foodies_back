@@ -84,14 +84,16 @@ const UserModel = {
     return data;
   },
 
-  /**
-   * Update profile (name, mobile, profile_photo)
+ /**
+   * Update profile (name, mobile, profile_photo, is_mobile_verified)
    */
-  updateProfile: async (id, { name, mobile, profile_photo }) => {
+  updateProfile: async (id, { name, mobile, profile_photo, is_mobile_verified }) => {
     const updateData = {};
     if (name) updateData.name = name.trim();
     if (mobile) updateData.mobile = mobile;
     if (profile_photo !== undefined) updateData.profile_photo = profile_photo;
+    // Allow explicitly resetting mobile verification when the mobile number changes
+    if (is_mobile_verified !== undefined) updateData.is_mobile_verified = is_mobile_verified;
 
     const { data, error } = await supabase
       .from('users')
@@ -103,7 +105,6 @@ const UserModel = {
     if (error) throw error;
     return data;
   },
-
   /**
    * Delete user by email (re-registration cleanup)
    */
