@@ -10,6 +10,7 @@ const {
 } = require("../services/passwordResetEmailService");
 const PasswordResetModel = require("../models/passwordResetModel");
 const { uploadImage, deleteImage } = require("../utils/imageUpload");
+const { getAuth } = require('../config/firebase');
 const RefreshTokenModel = require("../models/refreshTokenModel");
 const {
   generateAccessToken,
@@ -1006,6 +1007,66 @@ const changePassword = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/auth/verify-mobile-otp
+ * Verifies the Firebase ID token, then marks is_mobile_verified = true
+ */
+const verifyMobileOtp = async (req, res, next) => {
+  try {
+    const { firebaseToken } = req.body;
+
+    if (!firebaseToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Firebase token is required.',
+      });
+    }
+
+    // 1. Verify the token Firebase sent to the client
+   let decodedToken;
+try {
+  decodedToken = await getAuth().verifyIdToken(firebaseToken);
+} catch (err) {
+  console.error('Firebase token verification error:', err.code, err.message);
+  return res.status(401).json({
+    success: false,
+    message: 'Invalid or expired verification token. Please try again.',
+    debug: err.code,
+  });
+}
+
+    // 2. Make sure the phone number in the token matches what's on the user's account
+    //    Firebase stores the number in E.164 format e.g. +94771234567
+    const verifiedPhone = decodedToken.phone_number;
+    const userMobile = req.user.mobile; // stored as 10-digit e.g. 0771234567
+
+    // Strip leading zero and prepend +94 (Sri Lanka) for comparison
+    // Adjust the country code prefix to match YOUR users' numbers
+    const normalizedUserMobile = '+94' + userMobile.replace(/^0/, '');
+
+    if (verifiedPhone !== normalizedUserMobile) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number mismatch. Please verify the number on your account.',
+      });
+    }
+
+    // 3. Mark mobile as verified in DB
+    const updatedUser = await UserModel.markMobileAsVerified(req.user.id);
+
+    // 4. Update localStorage-friendly user object in response
+    return res.status(200).json({
+      success: true,
+      message: 'Mobile number verified successfully!',
+      data: {
+        user: updatedUser,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   register,
   registerValidation,
@@ -1030,4 +1091,5 @@ module.exports = {
   updateProfileValidation,
   changePassword,
   changePasswordValidation,
+  verifyMobileOtp,
 };

@@ -31,6 +31,7 @@ const {
   updateProfileValidation,
   changePassword,
   changePasswordValidation,
+  verifyMobileOtp,
 } = require('../controllers/authController');
 
 // Rate Limiters
@@ -70,6 +71,9 @@ router.post('/logout', logout);
 
 // Protected
 router.get('/me', protect, getMe);
+
+// Mobile verification (Firebase phone auth)
+router.post('/verify-mobile-otp', protect, verifyMobileOtp);
 
 // Profile (Account Settings)
 router.put('/profile', protect, upload.single('profile_photo'), validate(updateProfileValidation), updateProfile);
