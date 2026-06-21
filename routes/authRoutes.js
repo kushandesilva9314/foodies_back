@@ -1,11 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const validate = require('../middlewares/validate');
 const { protect } = require('../middlewares/authMiddleware');
 
-const upload = multer();
+const upload = require('../middlewares/upload');
 
 const {
   register,
@@ -57,10 +56,32 @@ const forgotPasswordLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: {
+    success: false,
+    message: 'Too many registration attempts. Please try again after 1 hour.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: {
+    success: false,
+    message: 'Too many OTP requests. Please try again after 15 minutes.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Registration
-router.post('/register', upload.none(), validate(registerValidation), register);
-router.post('/verify-otp', validate(verifyOtpValidation), verifyOTP);
-router.post('/resend-otp', validate(resendOtpValidation), resendOTP);
+router.post('/register', registerLimiter, upload.none(), validate(registerValidation), register);
+router.post('/verify-otp', otpLimiter, validate(verifyOtpValidation), verifyOTP);
+router.post('/resend-otp', otpLimiter, validate(resendOtpValidation), resendOTP);
 
 // Login
 router.post('/login', loginLimiter, validate(loginValidation), login);
@@ -86,8 +107,7 @@ router.post('/logout-all', protect, logoutAllDevices);
 
 // Forgot Password
 router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordValidation), forgotPassword);
-router.post('/verify-reset-otp', validate(verifyResetOtpValidation), verifyResetOTP);
-router.post('/reset-password', validate(resetPasswordValidation), resetPassword);
-router.post('/resend-reset-otp', validate(resendOtpValidation), resendResetOTP);
-
+router.post('/verify-reset-otp', otpLimiter, validate(verifyResetOtpValidation), verifyResetOTP);
+router.post('/reset-password', otpLimiter, validate(resetPasswordValidation), resetPassword);
+router.post('/resend-reset-otp', otpLimiter, validate(resendOtpValidation), resendResetOTP);
 module.exports = router;

@@ -1023,7 +1023,7 @@ const verifyMobileOtp = async (req, res, next) => {
     }
 
     // 1. Verify the token Firebase sent to the client
-   let decodedToken;
+  let decodedToken;
 try {
   decodedToken = await getAuth().verifyIdToken(firebaseToken);
 } catch (err) {
@@ -1031,10 +1031,8 @@ try {
   return res.status(401).json({
     success: false,
     message: 'Invalid or expired verification token. Please try again.',
-    debug: err.code,
   });
 }
-
     // 2. Make sure the phone number in the token matches what's on the user's account
     //    Firebase stores the number in E.164 format e.g. +94771234567
     const verifiedPhone = decodedToken.phone_number;

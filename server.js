@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const dotenv = require('dotenv');
+const helmet = require('helmet');
 
 // Load environment variables
 dotenv.config();
@@ -17,6 +18,9 @@ const errorHandler = require('./middlewares/errorHandler');
 
 // Initialize express app
 const app = express();
+
+// Helmet — sets security-related HTTP headers, must be early
+app.use(helmet());
 
 // CORS — must be before everything
 app.use(cors({
