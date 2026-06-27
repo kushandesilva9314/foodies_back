@@ -28,8 +28,30 @@ const getRefreshTokenExpiry = (rememberMe) => {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 };
 
+/**
+ * Short-lived token proving the user just completed OTP verification
+ * for password reset. Required by resetPassword.
+ */
+const generateResetToken = (email) => {
+  return jwt.sign(
+    { email, purpose: 'password_reset' },
+    process.env.JWT_SECRET,
+    { expiresIn: '10m' }
+  );
+};
+
+const verifyResetToken = (token) => {
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  if (decoded.purpose !== 'password_reset') {
+    throw new Error('Invalid token purpose');
+  }
+  return decoded;
+};
+
 module.exports = {
   generateAccessToken,
   generateRefreshToken,
   getRefreshTokenExpiry,
+  generateResetToken,  
+  verifyResetToken,     
 };

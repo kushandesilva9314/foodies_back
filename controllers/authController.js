@@ -16,6 +16,8 @@ const {
   generateAccessToken,
   generateRefreshToken,
   getRefreshTokenExpiry,
+  generateResetToken,
+  verifyResetToken,
 } = require("../utils/tokenUtils");
 
 // ─── Validation Rules ─────────────────────────────────────────────────────────
@@ -146,12 +148,9 @@ const resetPasswordValidation = [
     .withMessage("Invalid email address")
     .normalizeEmail(),
 
-  body("otp")
-    .trim()
+  body("resetToken")
     .notEmpty()
-    .withMessage("OTP is required")
-    .matches(/^\d{6}$/)
-    .withMessage("OTP must be a 6-digit number"),
+    .withMessage("Reset token is required. Please verify your OTP again."),
 
   body("newPassword")
     .notEmpty()
@@ -334,13 +333,12 @@ const verifyOTP = async (req, res, next) => {
     });
 
     // Set refresh token as httpOnly cookie
-    res.cookie("refreshToken", newRefreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      expires: refreshTokenExpiry,
-    });
-
+  res.cookie("refreshToken", newRefreshToken, {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "strict",
+  // no `expires` — registration always starts as a session-only cookie
+});
     return res.status(200).json({
       success: true,
       message: "Account verified successfully! Welcome to Foodies.",
@@ -467,12 +465,13 @@ const login = async (req, res, next) => {
     });
 
     // Set refresh token as httpOnly cookie
-    res.cookie("refreshToken", newRefreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      expires: refreshTokenExpiry,
-    });
+// Set refresh token as httpOnly cookie
+res.cookie("refreshToken", newRefreshToken, {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "strict",
+  ...(rememberMe ? { expires: refreshTokenExpiry } : {}), // omit expires = browser-session cookie
+});
 
     return res.status(200).json({
       success: true,
@@ -562,7 +561,6 @@ const verifyResetOTP = async (req, res, next) => {
   try {
     const { email, otp } = req.body;
 
-    // 1. Find latest unused OTP
     const otpRecord = await PasswordResetModel.findLatestByEmail(email);
 
     if (!otpRecord) {
@@ -572,7 +570,6 @@ const verifyResetOTP = async (req, res, next) => {
       });
     }
 
-    // 2. Check max attempts
     if (otpRecord.attempts >= 5) {
       await PasswordResetModel.deleteByEmail(email);
       return res.status(429).json({
@@ -581,7 +578,6 @@ const verifyResetOTP = async (req, res, next) => {
       });
     }
 
-    // 3. Check expiry
     if (new Date() > new Date(otpRecord.expires_at)) {
       await PasswordResetModel.deleteByEmail(email);
       return res.status(400).json({
@@ -590,12 +586,8 @@ const verifyResetOTP = async (req, res, next) => {
       });
     }
 
-    // 4. Verify OTP
     if (otpRecord.otp !== otp) {
-      await PasswordResetModel.incrementAttempts(
-        otpRecord.id,
-        otpRecord.attempts,
-      );
+      await PasswordResetModel.incrementAttempts(otpRecord.id, otpRecord.attempts);
       const remainingAttempts = 4 - otpRecord.attempts;
       return res.status(400).json({
         success: false,
@@ -603,29 +595,49 @@ const verifyResetOTP = async (req, res, next) => {
       });
     }
 
-    // 5. Mark OTP as used
     await PasswordResetModel.markAsUsed(otpRecord.id);
+
+    // ── Issue short-lived signed token proving OTP verification ──
+    const resetToken = generateResetToken(email);
 
     return res.status(200).json({
       success: true,
       message: "OTP verified successfully. You can now reset your password.",
+      data: { resetToken },
     });
   } catch (error) {
     next(error);
   }
 };
-
 /**
  * POST /api/auth/reset-password
  * Step 3: Reset password after OTP verified
  */
 const resetPassword = async (req, res, next) => {
   try {
-    const { email, newPassword } = req.body;
+    const { email, resetToken, newPassword } = req.body;
 
-    // 1. Check user exists
+    // 1. Verify the reset token itself — signature, expiry, and purpose
+    let decoded;
+    try {
+      decoded = verifyResetToken(resetToken);
+    } catch (err) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired reset session. Please verify your OTP again.",
+      });
+    }
+
+    // 2. Token must belong to the same email being reset
+    if (decoded.email !== email.toLowerCase()) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired reset session. Please verify your OTP again.",
+      });
+    }
+
+    // 3. Check user exists
     const user = await UserModel.findByEmail(email);
-
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -633,19 +645,8 @@ const resetPassword = async (req, res, next) => {
       });
     }
 
-    // 2. Make sure OTP was verified (no active unused OTPs should exist)
-    const activeOtp = await PasswordResetModel.findLatestByEmail(email);
-
-    if (activeOtp && !activeOtp.is_used) {
-      return res.status(400).json({
-        success: false,
-        message: "Please verify your OTP before resetting password.",
-      });
-    }
-
-    // 3. Check new password is not same as old
+    // 4. Check new password is not same as old
     const isSamePassword = await bcrypt.compare(newPassword, user.password);
-
     if (isSamePassword) {
       return res.status(400).json({
         success: false,
@@ -653,19 +654,16 @@ const resetPassword = async (req, res, next) => {
       });
     }
 
-    // 4. Hash new password
+    // 5. Hash & update
     const hashedPassword = await bcrypt.hash(newPassword, 12);
-
-    // 5. Update password in DB
     await UserModel.updatePassword(email, hashedPassword);
 
-    // 6. Clean up all reset OTPs
+    // 6. Clean up any leftover reset OTPs
     await PasswordResetModel.deleteByEmail(email);
 
     return res.status(200).json({
       success: true,
-      message:
-        "Password reset successfully! You can now login with your new password.",
+      message: "Password reset successfully! You can now login with your new password.",
     });
   } catch (error) {
     next(error);
@@ -729,47 +727,49 @@ const resendResetOTP = async (req, res, next) => {
  */
 const refreshAccessToken = async (req, res, next) => {
   try {
-    // Read from cookie instead of body
     const refreshToken = req.cookies.refreshToken;
 
     if (!refreshToken) {
-      return res.status(401).json({
-        success: false,
-        message: "Refresh token is required.",
-      });
+      return res.status(401).json({ success: false, message: "Refresh token is required." });
     }
 
     const storedToken = await RefreshTokenModel.findByToken(refreshToken);
 
     if (!storedToken) {
+      return res.status(401).json({ success: false, message: "Invalid refresh token. Please login again." });
+    }
+
+    // ── Reuse detection ──────────────────────────────────────────────
+    // This exact token was already rotated away once before. Someone is
+    // replaying an old refresh token — treat it as a compromised session.
+    if (storedToken.revoked_at) {
+      await RefreshTokenModel.deleteAllByUserId(storedToken.user_id);
+      res.clearCookie("refreshToken", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+      });
       return res.status(401).json({
         success: false,
-        message: "Invalid refresh token. Please login again.",
+        code: "TOKEN_REUSE_DETECTED",
+        message: "Security alert: this session was reused. All devices have been signed out — please log in again.",
       });
     }
 
     if (new Date() > new Date(storedToken.expires_at)) {
       await RefreshTokenModel.deleteByToken(refreshToken);
       res.clearCookie("refreshToken");
-      return res.status(401).json({
-        success: false,
-        message: "Refresh token expired. Please login again.",
-      });
+      return res.status(401).json({ success: false, message: "Refresh token expired. Please login again." });
     }
 
     const user = await UserModel.findById(storedToken.user_id);
-
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "User no longer exists.",
-      });
+      return res.status(401).json({ success: false, message: "User no longer exists." });
     }
 
-    // Rotation — delete old refresh token
-    await RefreshTokenModel.deleteByToken(refreshToken);
+    // Rotation — mark old token as used (not deleted) so reuse is detectable
+    await RefreshTokenModel.revokeToken(refreshToken);
 
-    // Generate new tokens
     const accessToken = generateAccessToken(user.id);
     const newRefreshToken = generateRefreshToken();
     const refreshTokenExpiry = getRefreshTokenExpiry(storedToken.remember_me);
@@ -781,12 +781,11 @@ const refreshAccessToken = async (req, res, next) => {
       expiresAt: refreshTokenExpiry,
     });
 
-    // Set new refresh token as httpOnly cookie
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
-      expires: refreshTokenExpiry,
+      ...(storedToken.remember_me ? { expires: refreshTokenExpiry } : {}), // see Fix 3
     });
 
     return res.status(200).json({

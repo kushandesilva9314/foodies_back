@@ -16,6 +16,9 @@ const routes = require('./routes');
 // Import middleware
 const errorHandler = require('./middlewares/errorHandler');
 
+// Import jobs
+const { startTokenCleanupJob } = require('./jobs/cleanupTokens');
+
 // Initialize express app
 const app = express();
 
@@ -68,6 +71,9 @@ app.listen(PORT, () => {
   console.log('Health: http://localhost:' + PORT + '/health');
   console.log('API: http://localhost:' + PORT + '/api');
   console.log('═══════════════════════════════════════');
+
+  // Start the daily refresh-token cleanup cron job
+  startTokenCleanupJob();
 });
 
 module.exports = app;

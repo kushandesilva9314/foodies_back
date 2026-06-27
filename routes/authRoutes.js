@@ -78,6 +78,17 @@ const otpLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30, // generous — auto-refresh fires roughly every 15 min per active tab
+  message: {
+    success: false,
+    message: 'Too many refresh attempts. Please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Registration
 router.post('/register', registerLimiter, upload.none(), validate(registerValidation), register);
 router.post('/verify-otp', otpLimiter, validate(verifyOtpValidation), verifyOTP);
@@ -87,7 +98,7 @@ router.post('/resend-otp', otpLimiter, validate(resendOtpValidation), resendOTP)
 router.post('/login', loginLimiter, validate(loginValidation), login);
 
 // Token management
-router.post('/refresh', refreshAccessToken);
+router.post('/refresh', refreshLimiter, refreshAccessToken);
 router.post('/logout', logout);
 
 // Protected
@@ -110,4 +121,5 @@ router.post('/forgot-password', forgotPasswordLimiter, validate(forgotPasswordVa
 router.post('/verify-reset-otp', otpLimiter, validate(verifyResetOtpValidation), verifyResetOTP);
 router.post('/reset-password', otpLimiter, validate(resetPasswordValidation), resetPassword);
 router.post('/resend-reset-otp', otpLimiter, validate(resendOtpValidation), resendResetOTP);
+
 module.exports = router;
