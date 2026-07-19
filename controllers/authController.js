@@ -10,8 +10,9 @@ const {
 } = require("../services/passwordResetEmailService");
 const PasswordResetModel = require("../models/passwordResetModel");
 const { uploadImage, deleteImage } = require("../utils/imageUpload");
-const { getAuth } = require('../config/firebase');
+const { getAuth } = require("../config/firebase");
 const RefreshTokenModel = require("../models/refreshTokenModel");
+const { verifyRecaptcha } = require("../utils/recaptcha");
 const {
   generateAccessToken,
   generateRefreshToken,
@@ -207,6 +208,21 @@ const changePasswordValidation = [
     .withMessage("Password must contain a special character (@$!%*?&)"),
 ];
 
+const updatePreferencesValidation = [
+  body("mobile_notifications")
+    .optional()
+    .isBoolean()
+    .withMessage("mobile_notifications must be a boolean"),
+  body("email_notifications")
+    .optional()
+    .isBoolean()
+    .withMessage("email_notifications must be a boolean"),
+  body("browser_notifications")
+    .optional()
+    .isBoolean()
+    .withMessage("browser_notifications must be a boolean"),
+];
+
 // ─── Controllers ──────────────────────────────────────────────────────────────
 
 /**
@@ -333,12 +349,12 @@ const verifyOTP = async (req, res, next) => {
     });
 
     // Set refresh token as httpOnly cookie
-  res.cookie("refreshToken", newRefreshToken, {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "strict",
-  // no `expires` — registration always starts as a session-only cookie
-});
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      // no `expires` — registration always starts as a session-only cookie
+    });
     return res.status(200).json({
       success: true,
       message: "Account verified successfully! Welcome to Foodies.",
@@ -353,6 +369,9 @@ const verifyOTP = async (req, res, next) => {
           profile_photo: verifiedUser.profile_photo,
           role: verifiedUser.role,
           is_mobile_verified: verifiedUser.is_mobile_verified,
+          mobile_notifications: verifiedUser.mobile_notifications,
+          email_notifications: verifiedUser.email_notifications,
+          browser_notifications: verifiedUser.browser_notifications,
         },
       },
     });
@@ -465,13 +484,13 @@ const login = async (req, res, next) => {
     });
 
     // Set refresh token as httpOnly cookie
-// Set refresh token as httpOnly cookie
-res.cookie("refreshToken", newRefreshToken, {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "strict",
-  ...(rememberMe ? { expires: refreshTokenExpiry } : {}), // omit expires = browser-session cookie
-});
+    // Set refresh token as httpOnly cookie
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      ...(rememberMe ? { expires: refreshTokenExpiry } : {}), // omit expires = browser-session cookie
+    });
 
     return res.status(200).json({
       success: true,
@@ -487,6 +506,9 @@ res.cookie("refreshToken", newRefreshToken, {
           profile_photo: user.profile_photo,
           role: user.role,
           is_mobile_verified: user.is_mobile_verified,
+          mobile_notifications: user.mobile_notifications,
+          email_notifications: user.email_notifications,
+          browser_notifications: user.browser_notifications,
         },
         redirectTo: user.role === "admin" ? "/admin" : "/",
       },
@@ -587,7 +609,10 @@ const verifyResetOTP = async (req, res, next) => {
     }
 
     if (otpRecord.otp !== otp) {
-      await PasswordResetModel.incrementAttempts(otpRecord.id, otpRecord.attempts);
+      await PasswordResetModel.incrementAttempts(
+        otpRecord.id,
+        otpRecord.attempts,
+      );
       const remainingAttempts = 4 - otpRecord.attempts;
       return res.status(400).json({
         success: false,
@@ -624,7 +649,8 @@ const resetPassword = async (req, res, next) => {
     } catch (err) {
       return res.status(401).json({
         success: false,
-        message: "Invalid or expired reset session. Please verify your OTP again.",
+        message:
+          "Invalid or expired reset session. Please verify your OTP again.",
       });
     }
 
@@ -632,7 +658,8 @@ const resetPassword = async (req, res, next) => {
     if (decoded.email !== email.toLowerCase()) {
       return res.status(401).json({
         success: false,
-        message: "Invalid or expired reset session. Please verify your OTP again.",
+        message:
+          "Invalid or expired reset session. Please verify your OTP again.",
       });
     }
 
@@ -663,7 +690,8 @@ const resetPassword = async (req, res, next) => {
 
     return res.status(200).json({
       success: true,
-      message: "Password reset successfully! You can now login with your new password.",
+      message:
+        "Password reset successfully! You can now login with your new password.",
     });
   } catch (error) {
     next(error);
@@ -730,13 +758,18 @@ const refreshAccessToken = async (req, res, next) => {
     const refreshToken = req.cookies.refreshToken;
 
     if (!refreshToken) {
-      return res.status(401).json({ success: false, message: "Refresh token is required." });
+      return res
+        .status(401)
+        .json({ success: false, message: "Refresh token is required." });
     }
 
     const storedToken = await RefreshTokenModel.findByToken(refreshToken);
 
     if (!storedToken) {
-      return res.status(401).json({ success: false, message: "Invalid refresh token. Please login again." });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid refresh token. Please login again.",
+      });
     }
 
     // ── Reuse detection ──────────────────────────────────────────────
@@ -752,19 +785,25 @@ const refreshAccessToken = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         code: "TOKEN_REUSE_DETECTED",
-        message: "Security alert: this session was reused. All devices have been signed out — please log in again.",
+        message:
+          "Security alert: this session was reused. All devices have been signed out — please log in again.",
       });
     }
 
     if (new Date() > new Date(storedToken.expires_at)) {
       await RefreshTokenModel.deleteByToken(refreshToken);
       res.clearCookie("refreshToken");
-      return res.status(401).json({ success: false, message: "Refresh token expired. Please login again." });
+      return res.status(401).json({
+        success: false,
+        message: "Refresh token expired. Please login again.",
+      });
     }
 
     const user = await UserModel.findById(storedToken.user_id);
     if (!user) {
-      return res.status(401).json({ success: false, message: "User no longer exists." });
+      return res
+        .status(401)
+        .json({ success: false, message: "User no longer exists." });
     }
 
     // Rotation — mark old token as used (not deleted) so reuse is detectable
@@ -800,6 +839,9 @@ const refreshAccessToken = async (req, res, next) => {
           profile_photo: user.profile_photo,
           role: user.role,
           is_mobile_verified: user.is_mobile_verified,
+          mobile_notifications: user.mobile_notifications,
+          email_notifications: user.email_notifications,
+          browser_notifications: user.browser_notifications,
         },
       },
     });
@@ -853,6 +895,9 @@ const getMe = async (req, res, next) => {
           profile_photo: req.user.profile_photo,
           role: req.user.role,
           is_mobile_verified: req.user.is_mobile_verified,
+          mobile_notifications: req.user.mobile_notifications,
+          email_notifications: req.user.email_notifications,
+          browser_notifications: req.user.browser_notifications,
         },
       },
     });
@@ -902,7 +947,10 @@ const updateProfile = async (req, res, next) => {
     }
 
     // ── Persist changes ──
-    const updatedUser = await UserModel.updateProfile(currentUser.id, updateData);
+    const updatedUser = await UserModel.updateProfile(
+      currentUser.id,
+      updateData,
+    );
 
     // ── Clean up old photo from storage if it was replaced or removed ──
     if ((file || wantsRemovePhoto) && currentUser.profile_photo) {
@@ -974,7 +1022,10 @@ const changePassword = async (req, res, next) => {
     }
 
     // 1. Verify current password
-    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    const isCurrentPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.password,
+    );
 
     if (!isCurrentPasswordValid) {
       return res.status(401).json({
@@ -1017,21 +1068,25 @@ const verifyMobileOtp = async (req, res, next) => {
     if (!firebaseToken) {
       return res.status(400).json({
         success: false,
-        message: 'Firebase token is required.',
+        message: "Firebase token is required.",
       });
     }
 
     // 1. Verify the token Firebase sent to the client
-  let decodedToken;
-try {
-  decodedToken = await getAuth().verifyIdToken(firebaseToken);
-} catch (err) {
-  console.error('Firebase token verification error:', err.code, err.message);
-  return res.status(401).json({
-    success: false,
-    message: 'Invalid or expired verification token. Please try again.',
-  });
-}
+    let decodedToken;
+    try {
+      decodedToken = await getAuth().verifyIdToken(firebaseToken);
+    } catch (err) {
+      console.error(
+        "Firebase token verification error:",
+        err.code,
+        err.message,
+      );
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or expired verification token. Please try again.",
+      });
+    }
     // 2. Make sure the phone number in the token matches what's on the user's account
     //    Firebase stores the number in E.164 format e.g. +94771234567
     const verifiedPhone = decodedToken.phone_number;
@@ -1039,12 +1094,13 @@ try {
 
     // Strip leading zero and prepend +94 (Sri Lanka) for comparison
     // Adjust the country code prefix to match YOUR users' numbers
-    const normalizedUserMobile = '+94' + userMobile.replace(/^0/, '');
+    const normalizedUserMobile = "+94" + userMobile.replace(/^0/, "");
 
     if (verifiedPhone !== normalizedUserMobile) {
       return res.status(400).json({
         success: false,
-        message: 'Phone number mismatch. Please verify the number on your account.',
+        message:
+          "Phone number mismatch. Please verify the number on your account.",
       });
     }
 
@@ -1054,10 +1110,93 @@ try {
     // 4. Update localStorage-friendly user object in response
     return res.status(200).json({
       success: true,
-      message: 'Mobile number verified successfully!',
+      message: "Mobile number verified successfully!",
       data: {
         user: updatedUser,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * PUT /api/auth/preferences
+ */
+const updatePreferences = async (req, res, next) => {
+  try {
+    const { mobile_notifications, email_notifications, browser_notifications } =
+      req.body;
+
+    // Defense in depth — never trust the client
+    if (mobile_notifications === true && !req.user.is_mobile_verified) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Please verify your mobile number before enabling mobile notifications.",
+      });
+    }
+
+    const updatedUser = await UserModel.updatePreferences(req.user.id, {
+      mobile_notifications,
+      email_notifications,
+      browser_notifications,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Preferences updated successfully.",
+      data: { user: updatedUser },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * DELETE /api/auth/account
+ */
+const deleteAccount = async (req, res, next) => {
+  try {
+    const { recaptchaToken } = req.body;
+
+    if (!recaptchaToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Please complete the captcha before deleting your account.",
+      });
+    }
+
+    const isHuman = await verifyRecaptcha(recaptchaToken);
+    if (!isHuman) {
+      return res.status(400).json({
+        success: false,
+        message: "Captcha verification failed. Please try again.",
+      });
+    }
+
+    const userId = req.user.id;
+    const userEmail = req.user.email;
+
+    await RefreshTokenModel.deleteAllByUserId(userId);
+    await OTPModel.deleteByEmail(userEmail);
+    await PasswordResetModel.deleteByEmail(userEmail);
+
+    if (req.user.profile_photo) {
+      await deleteImage(req.user.profile_photo);
+    }
+
+    await UserModel.deleteById(userId);
+
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Your account has been permanently deleted.",
     });
   } catch (error) {
     next(error);
@@ -1089,4 +1228,7 @@ module.exports = {
   changePassword,
   changePasswordValidation,
   verifyMobileOtp,
+  updatePreferences,
+  updatePreferencesValidation,
+  deleteAccount,
 };

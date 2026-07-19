@@ -26,11 +26,14 @@ const {
   resetPasswordValidation,
   resendResetOTP,
   getMe,
- updateProfile,
+  updateProfile,
   updateProfileValidation,
   changePassword,
   changePasswordValidation,
   verifyMobileOtp,
+  updatePreferences,
+  updatePreferencesValidation,
+  deleteAccount,
 } = require('../controllers/authController');
 
 // Rate Limiters
@@ -80,7 +83,7 @@ const otpLimiter = rateLimit({
 
 const refreshLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30, // generous — auto-refresh fires roughly every 15 min per active tab
+  max: 30,
   message: {
     success: false,
     message: 'Too many refresh attempts. Please try again later.',
@@ -112,6 +115,12 @@ router.put('/profile', protect, upload.single('profile_photo'), validate(updateP
 
 // Change password (logged-in user, requires current password)
 router.put('/change-password', protect, validate(changePasswordValidation), changePassword);
+
+// Notification preferences (mobile/email/browser toggles)
+router.put('/preferences', protect, validate(updatePreferencesValidation), updatePreferences);
+
+// Permanently delete the logged-in user's account (requires reCAPTCHA token)
+router.delete('/account', protect, deleteAccount);
 
 // Sign out from ALL devices (current device included — deletes every refresh token)
 router.post('/logout-all', protect, logoutAllDevices);
