@@ -74,7 +74,8 @@ const createProduct = async (req, res, next) => {
       price, 
       availability = 'yes',
       menu_id,
-      category_id
+      category_id,
+      portions
     } = req.body;
     
     const file = req.file;
@@ -87,7 +88,8 @@ const createProduct = async (req, res, next) => {
       price,
       availability,
       menu_id,
-      category_id
+      category_id,
+      portions
     };
 
     // Validate input
@@ -127,6 +129,18 @@ const createProduct = async (req, res, next) => {
     // Sanitize data
     const sanitizedData = Product.sanitize(productData);
     sanitizedData.image = imageUrl;
+
+    // If portions are enabled, keep the plain price column in sync
+    // with the cheapest active portion — this is what every other part
+    // of the app (sorting, discount math, cart, etc.) reads.
+    if (sanitizedData.portions && sanitizedData.portions.enabled) {
+      const activePrices = sanitizedData.portions.options
+        .filter((o) => o.active && o.price != null)
+        .map((o) => o.price);
+      if (activePrices.length > 0) {
+        sanitizedData.price = Math.min(...activePrices);
+      }
+    }
     
     // Set defaults for featured and discount
     sanitizedData.featured = 'no';
@@ -181,7 +195,8 @@ const updateProduct = async (req, res, next) => {
       menu_id,
       category_id,
       featured,
-      discount
+      discount,
+      portions 
     } = req.body;
     
     const file = req.file;
@@ -196,7 +211,8 @@ const updateProduct = async (req, res, next) => {
       menu_id,
       category_id,
       featured,
-      discount
+      discount,
+      portions 
     };
 
     // Validate input
@@ -242,6 +258,18 @@ const updateProduct = async (req, res, next) => {
 
     // Sanitize data
     const sanitizedData = Product.sanitize(productData);
+
+    // If portions are enabled, keep the plain price column in sync
+    // with the cheapest active portion — this is what every other part
+    // of the app (sorting, discount math, cart, etc.) reads.
+    if (sanitizedData.portions && sanitizedData.portions.enabled) {
+      const activePrices = sanitizedData.portions.options
+        .filter((o) => o.active && o.price != null)
+        .map((o) => o.price);
+      if (activePrices.length > 0) {
+        sanitizedData.price = Math.min(...activePrices);
+      }
+    }
 
     // If featured is 'no', reset discount to 0
     if (sanitizedData.featured === 'no') {

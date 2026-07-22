@@ -77,6 +77,47 @@ class Product {
       }
     }
 
+    // Check portions (optional)
+    if (data.portions !== undefined && data.portions !== null && data.portions !== '') {
+      let portionsObj = data.portions;
+      if (typeof portionsObj === 'string') {
+        try {
+          portionsObj = JSON.parse(portionsObj);
+        } catch (e) {
+          errors.push('Portions must be valid JSON');
+          portionsObj = null;
+        }
+      }
+
+      if (portionsObj && portionsObj.enabled) {
+        const validSizes = ['small', 'medium', 'large'];
+
+        if (!Array.isArray(portionsObj.options) || portionsObj.options.length !== 3) {
+          errors.push('Portions must include exactly 3 size options (small, medium, large)');
+        } else {
+          const sizesSeen = portionsObj.options.map((o) => o.size);
+          const hasAllSizes = validSizes.every((s) => sizesSeen.includes(s));
+          if (!hasAllSizes) {
+            errors.push('Portion sizes must be small, medium, and large');
+          }
+
+          const activeOptions = portionsObj.options.filter((o) => o.active);
+          if (activeOptions.length < 1) {
+            errors.push('At least one portion size must be active');
+          }
+
+          for (const opt of portionsObj.options) {
+            if (opt.active) {
+              const p = parseFloat(opt.price);
+              if (isNaN(p) || p <= 0) {
+                errors.push(`Price for ${opt.size} portion must be a positive number`);
+              }
+            }
+          }
+        }
+      }
+    }
+
     // Menu and Category are optional - no validation needed
 
     return {
@@ -103,6 +144,31 @@ class Product {
     // Handle optional category_id (can be null or empty string)
     if (data.category_id !== undefined) {
       sanitized.category_id = data.category_id === '' || data.category_id === null ? null : data.category_id;
+    }
+
+    // Handle portions
+    if (data.portions !== undefined) {
+      let portionsObj = data.portions;
+      if (typeof portionsObj === 'string') {
+        try {
+          portionsObj = portionsObj.trim() === '' ? null : JSON.parse(portionsObj);
+        } catch (e) {
+          portionsObj = null;
+        }
+      }
+
+      if (portionsObj && portionsObj.enabled) {
+        sanitized.portions = {
+          enabled: true,
+          options: portionsObj.options.map((o) => ({
+            size: o.size,
+            active: !!o.active,
+            price: o.active ? parseFloat(o.price) : null,
+          })),
+        };
+      } else {
+        sanitized.portions = null;
+      }
     }
     
     if (data.featured) sanitized.featured = data.featured.toLowerCase();
