@@ -19,4 +19,13 @@ router.put('/:id', protect, adminOnly, upload.single('image'), menuController.up
 // DELETE /api/menus/:id - Delete menu (admin only)
 router.delete('/:id', protect, adminOnly, menuController.deleteMenu);
 
+// POST /api/menus/:menuId/categories - Create a category inside a menu (admin only)
+router.post('/:menuId/categories', protect, adminOnly, upload.single('image'), menuController.createMenuCategory);
+
+// PUT /api/menus/:menuId/categories/:categoryId - Update a category within a menu (admin only)
+router.put('/:menuId/categories/:categoryId', protect, adminOnly, upload.single('image'), menuController.updateMenuCategory);
+
+// DELETE /api/menus/:menuId/categories/:categoryId - Delete a category from a menu (admin only)
+router.delete('/:menuId/categories/:categoryId', protect, adminOnly, menuController.deleteMenuCategory);
+
 module.exports = router;

@@ -109,17 +109,46 @@ const createProduct = async (req, res, next) => {
       });
     }
 
+    if (category_id && menu_id) {
+      const { data: categoryCheck } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('id', category_id)
+        .eq('menu_id', menu_id)
+        .maybeSingle();
+
+      if (!categoryCheck) {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected category does not belong to the selected menu'
+        });
+      }
+    }
+
     // Check for duplicate item_no
     const { data: existingProduct } = await supabase
       .from('products')
       .select('id')
       .ilike('item_no', item_no.trim())
-      .single();
+      .maybeSingle();
 
     if (existingProduct) {
       return res.status(409).json({
         success: false,
         message: `A product with Item No "${item_no.trim()}" already exists`
+      });
+    }
+
+    const { data: existingByName } = await supabase
+      .from('products')
+      .select('id')
+      .ilike('name', name.trim())
+      .maybeSingle();
+
+    if (existingByName) {
+      return res.status(409).json({
+        success: false,
+        message: `A product named "${name.trim()}" already exists`
       });
     }
 
@@ -239,6 +268,22 @@ const updateProduct = async (req, res, next) => {
       });
     }
 
+    if (category_id && menu_id) {
+      const { data: categoryCheck } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('id', category_id)
+        .eq('menu_id', menu_id)
+        .maybeSingle();
+
+      if (!categoryCheck) {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected category does not belong to the selected menu'
+        });
+      }
+    }
+
     // Check for duplicate item_no (excluding current product)
     if (item_no) {
       const { data: duplicateProduct } = await supabase
@@ -246,12 +291,28 @@ const updateProduct = async (req, res, next) => {
         .select('id')
         .ilike('item_no', item_no.trim())
         .neq('id', id)
-        .single();
+        .maybeSingle();
 
       if (duplicateProduct) {
         return res.status(409).json({
           success: false,
           message: `A product with Item No "${item_no.trim()}" already exists`
+        });
+      }
+    }
+
+    if (name) {
+      const { data: duplicateByName } = await supabase
+        .from('products')
+        .select('id')
+        .ilike('name', name.trim())
+        .neq('id', id)
+        .maybeSingle();
+
+      if (duplicateByName) {
+        return res.status(409).json({
+          success: false,
+          message: `A product named "${name.trim()}" already exists`
         });
       }
     }

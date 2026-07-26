@@ -1,23 +1,29 @@
 const supabase = require('../config/supabase');
-const Menu = require('../models/menuModel');
 const { uploadImage, deleteImage } = require('../utils/imageUpload');
 
-// Get all menus
+// Get all menus, each with its categories embedded (ordered by position)
 const getAllMenus = async (req, res, next) => {
   try {
     const { data, error } = await supabase
       .from('menus')
-      .select('*')
-      .order('created_at', { ascending: false });
+      .select(`
+        *,
+        categories (*)
+      `)
+      .order('position', { ascending: true });
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
+
+    // Sort each menu's embedded categories by position
+    const sorted = data.map((menu) => ({
+      ...menu,
+      categories: (menu.categories || []).sort((a, b) => a.position - b.position)
+    }));
 
     res.status(200).json({
       success: true,
-      count: data.length,
-      data: data
+      count: sorted.length,
+      data: sorted
     });
   } catch (error) {
     console.error('Get all menus error:', error);
@@ -25,64 +31,52 @@ const getAllMenus = async (req, res, next) => {
   }
 };
 
-// Get single menu by ID
+// Get single menu by ID, with its categories embedded
 const getMenuById = async (req, res, next) => {
   try {
     const { id } = req.params;
 
     const { data, error } = await supabase
       .from('menus')
-      .select('*')
+      .select(`*, categories (*)`)
       .eq('id', id)
       .single();
 
     if (error) {
       if (error.code === 'PGRST116') {
-        return res.status(404).json({
-          success: false,
-          message: 'Menu not found'
-        });
+        return res.status(404).json({ success: false, message: 'Menu not found' });
       }
       throw error;
     }
 
-    res.status(200).json({
-      success: true,
-      data: data
-    });
+    data.categories = (data.categories || []).sort((a, b) => a.position - b.position);
+
+    res.status(200).json({ success: true, data });
   } catch (error) {
     console.error('Get menu by ID error:', error);
     next(error);
   }
 };
 
-// Create new menu
+// ---------- Menu CRUD (unchanged from before) ----------
+
 const createMenu = async (req, res, next) => {
   try {
-    const { name } = req.body;
+    const { name, position } = req.body;
     const file = req.file;
 
-    // Validate input
     if (!name || !name.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Menu name is required'
-      });
+      return res.status(400).json({ success: false, message: 'Menu name is required' });
     }
-
     if (!file) {
-      return res.status(400).json({
-        success: false,
-        message: 'Menu image is required'
-      });
+      return res.status(400).json({ success: false, message: 'Menu image is required' });
     }
 
-    // Check for duplicate name
     const { data: existingMenu } = await supabase
       .from('menus')
       .select('id')
       .ilike('name', name.trim())
-      .single();
+      .maybeSingle();
 
     if (existingMenu) {
       return res.status(409).json({
@@ -91,60 +85,66 @@ const createMenu = async (req, res, next) => {
       });
     }
 
-    // Upload image to Supabase Storage
+    const { data: maxRow } = await supabase
+      .from('menus')
+      .select('position')
+      .order('position', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const maxPos = maxRow?.position || 0;
+    let finalPosition = maxPos + 1;
+
+    if (position !== undefined && position !== null && position !== '') {
+      const requestedPos = parseInt(position, 10);
+      if (isNaN(requestedPos) || requestedPos < 1 || requestedPos > maxPos + 1) {
+        return res.status(400).json({
+          success: false,
+          message: `Position must be between 1 and ${maxPos + 1}`
+        });
+      }
+      finalPosition = requestedPos;
+      if (finalPosition <= maxPos) {
+        const { error: shiftError } = await supabase.rpc('shift_menu_positions_up', {
+          from_position: finalPosition
+        });
+        if (shiftError) throw shiftError;
+      }
+    }
+
     const imageUrl = await uploadImage(file.buffer, file.originalname, file.mimetype);
 
-    // Insert menu with image URL
     const { data, error } = await supabase
       .from('menus')
-      .insert([{
-        name: name.trim(),
-        image: imageUrl
-      }])
+      .insert([{ name: name.trim(), image: imageUrl, position: finalPosition }])
       .select()
       .single();
 
     if (error) {
-      // If database insert fails, delete the uploaded image
       await deleteImage(imageUrl);
       throw error;
     }
 
-    res.status(201).json({
-      success: true,
-      message: 'Menu created successfully',
-      data: data
-    });
+    res.status(201).json({ success: true, message: 'Menu created successfully', data });
   } catch (error) {
     console.error('Create menu error:', error);
-    
     if (error.code === '23505') {
-      return res.status(409).json({
-        success: false,
-        message: 'A menu with this name already exists'
-      });
+      return res.status(409).json({ success: false, message: 'A menu with this name already exists' });
     }
-    
     next(error);
   }
 };
 
-// Update menu
 const updateMenu = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name } = req.body;
+    const { name, position } = req.body;
     const file = req.file;
 
-    // Validate input
     if (!name || !name.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Menu name is required'
-      });
+      return res.status(400).json({ success: false, message: 'Menu name is required' });
     }
 
-    // Check if menu exists
     const { data: existingMenu, error: checkError } = await supabase
       .from('menus')
       .select('*')
@@ -152,19 +152,15 @@ const updateMenu = async (req, res, next) => {
       .single();
 
     if (checkError || !existingMenu) {
-      return res.status(404).json({
-        success: false,
-        message: 'Menu not found'
-      });
+      return res.status(404).json({ success: false, message: 'Menu not found' });
     }
 
-    // Check for duplicate name (excluding current menu)
     const { data: duplicateMenu } = await supabase
       .from('menus')
       .select('id')
       .ilike('name', name.trim())
       .neq('id', id)
-      .single();
+      .maybeSingle();
 
     if (duplicateMenu) {
       return res.status(409).json({
@@ -173,23 +169,49 @@ const updateMenu = async (req, res, next) => {
       });
     }
 
-    // Prepare update data
-    const updateData = {
-      name: name.trim()
-    };
+    if (position !== undefined && position !== null && position !== '') {
+      const requestedPos = parseInt(position, 10);
+      const oldPos = existingMenu.position;
 
-    // If new image is uploaded, upload it and update URL
-    if (file) {
-      const imageUrl = await uploadImage(file.buffer, file.originalname, file.mimetype);
-      updateData.image = imageUrl;
+      const { count } = await supabase
+        .from('menus')
+        .select('id', { count: 'exact', head: true });
 
-      // Delete old image from storage
-      if (existingMenu.image) {
-        await deleteImage(existingMenu.image);
+      if (isNaN(requestedPos) || requestedPos < 1 || requestedPos > count) {
+        return res.status(400).json({
+          success: false,
+          message: `Position must be between 1 and ${count}`
+        });
+      }
+
+      if (requestedPos !== oldPos) {
+        if (requestedPos < oldPos) {
+          const { error: shiftError } = await supabase.rpc('shift_menu_range_up', {
+            from_position: requestedPos,
+            to_position: oldPos - 1
+          });
+          if (shiftError) throw shiftError;
+        } else {
+          const { error: shiftError } = await supabase.rpc('shift_menu_range_down', {
+            from_position: oldPos + 1,
+            to_position: requestedPos
+          });
+          if (shiftError) throw shiftError;
+        }
       }
     }
 
-    // Update menu
+    const updateData = { name: name.trim() };
+    if (position !== undefined && position !== null && position !== '') {
+      updateData.position = parseInt(position, 10);
+    }
+
+    if (file) {
+      const imageUrl = await uploadImage(file.buffer, file.originalname, file.mimetype);
+      updateData.image = imageUrl;
+      if (existingMenu.image) await deleteImage(existingMenu.image);
+    }
+
     const { data, error } = await supabase
       .from('menus')
       .update(updateData)
@@ -198,72 +220,280 @@ const updateMenu = async (req, res, next) => {
       .single();
 
     if (error) {
-      // If update fails and new image was uploaded, delete it
-      if (updateData.image) {
-        await deleteImage(updateData.image);
-      }
+      if (updateData.image) await deleteImage(updateData.image);
       throw error;
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Menu updated successfully',
-      data: data
-    });
+    res.status(200).json({ success: true, message: 'Menu updated successfully', data });
   } catch (error) {
     console.error('Update menu error:', error);
-    
     if (error.code === '23505') {
-      return res.status(409).json({
-        success: false,
-        message: 'A menu with this name already exists'
-      });
+      return res.status(409).json({ success: false, message: 'A menu with this name already exists' });
     }
-    
     next(error);
   }
 };
 
-// Delete menu
 const deleteMenu = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    // Check if menu exists
     const { data: existingMenu, error: checkError } = await supabase
       .from('menus')
-      .select('*')
+      .select('*, categories (image)')
       .eq('id', id)
       .single();
 
     if (checkError || !existingMenu) {
-      return res.status(404).json({
+      return res.status(404).json({ success: false, message: 'Menu not found' });
+    }
+
+    const deletedPosition = existingMenu.position;
+    const categoryImages = (existingMenu.categories || []).map((c) => c.image);
+
+    // Deleting the menu cascades to its categories automatically (DB-level)
+    const { error } = await supabase.from('menus').delete().eq('id', id);
+    if (error) throw error;
+
+    if (existingMenu.image) await deleteImage(existingMenu.image);
+    for (const img of categoryImages) {
+      if (img) await deleteImage(img);
+    }
+
+    if (deletedPosition) {
+      const { error: shiftError } = await supabase.rpc('shift_menu_positions_down', {
+        from_position: deletedPosition
+      });
+      if (shiftError) throw shiftError;
+    }
+
+    res.status(200).json({ success: true, message: 'Menu deleted successfully' });
+  } catch (error) {
+    console.error('Delete menu error:', error);
+    next(error);
+  }
+};
+
+// ---------- Categories, embedded within a menu ----------
+
+// Create a category inside a specific menu
+const createMenuCategory = async (req, res, next) => {
+  try {
+    const { menuId } = req.params;
+    const { name, position } = req.body;
+    const file = req.file;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Category name is required' });
+    }
+    if (!file) {
+      return res.status(400).json({ success: false, message: 'Category image is required' });
+    }
+
+    const { data: menu } = await supabase.from('menus').select('id').eq('id', menuId).single();
+    if (!menu) {
+      return res.status(404).json({ success: false, message: 'Menu not found' });
+    }
+
+    const { data: existingCategory } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('menu_id', menuId)
+      .ilike('name', name.trim())
+      .maybeSingle();
+
+    if (existingCategory) {
+      return res.status(409).json({
         success: false,
-        message: 'Menu not found'
+        message: `A category named "${name.trim()}" already exists in this menu`
       });
     }
 
-    // Delete menu from database
-    const { error } = await supabase
-      .from('menus')
-      .delete()
-      .eq('id', id);
+    const { data: maxRow } = await supabase
+      .from('categories')
+      .select('position')
+      .eq('menu_id', menuId)
+      .order('position', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const maxPos = maxRow?.position || 0;
+    let finalPosition = maxPos + 1;
+
+    if (position !== undefined && position !== null && position !== '') {
+      const requestedPos = parseInt(position, 10);
+      if (isNaN(requestedPos) || requestedPos < 1 || requestedPos > maxPos + 1) {
+        return res.status(400).json({
+          success: false,
+          message: `Position must be between 1 and ${maxPos + 1}`
+        });
+      }
+      finalPosition = requestedPos;
+      if (finalPosition <= maxPos) {
+        const { error: shiftError } = await supabase.rpc('shift_menu_category_positions_up', {
+          mid: menuId,
+          from_position: finalPosition
+        });
+        if (shiftError) throw shiftError;
+      }
+    }
+
+    const imageUrl = await uploadImage(file.buffer, file.originalname, file.mimetype);
+
+    const { data, error } = await supabase
+      .from('categories')
+      .insert([{ menu_id: menuId, name: name.trim(), image: imageUrl, position: finalPosition }])
+      .select()
+      .single();
 
     if (error) {
+      await deleteImage(imageUrl);
       throw error;
     }
 
-    // Delete image from storage
-    if (existingMenu.image) {
-      await deleteImage(existingMenu.image);
+    res.status(201).json({ success: true, message: 'Category created successfully', data });
+  } catch (error) {
+    console.error('Create menu category error:', error);
+    next(error);
+  }
+};
+
+// Update a category within its menu (name, image, or position)
+const updateMenuCategory = async (req, res, next) => {
+  try {
+    const { menuId, categoryId } = req.params;
+    const { name, position } = req.body;
+    const file = req.file;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Category name is required' });
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Menu deleted successfully'
-    });
+    const { data: existingCategory, error: checkError } = await supabase
+      .from('categories')
+      .select('*')
+      .eq('id', categoryId)
+      .eq('menu_id', menuId)
+      .single();
+
+    if (checkError || !existingCategory) {
+      return res.status(404).json({ success: false, message: 'Category not found in this menu' });
+    }
+
+    const { data: duplicateCategory } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('menu_id', menuId)
+      .ilike('name', name.trim())
+      .neq('id', categoryId)
+      .maybeSingle();
+
+    if (duplicateCategory) {
+      return res.status(409).json({
+        success: false,
+        message: `A category named "${name.trim()}" already exists in this menu`
+      });
+    }
+
+    if (position !== undefined && position !== null && position !== '') {
+      const requestedPos = parseInt(position, 10);
+      const oldPos = existingCategory.position;
+
+      const { count } = await supabase
+        .from('categories')
+        .select('id', { count: 'exact', head: true })
+        .eq('menu_id', menuId);
+
+      if (isNaN(requestedPos) || requestedPos < 1 || requestedPos > count) {
+        return res.status(400).json({
+          success: false,
+          message: `Position must be between 1 and ${count}`
+        });
+      }
+
+      if (requestedPos !== oldPos) {
+        if (requestedPos < oldPos) {
+          const { error: shiftError } = await supabase.rpc('shift_menu_category_range_up', {
+            mid: menuId,
+            from_position: requestedPos,
+            to_position: oldPos - 1
+          });
+          if (shiftError) throw shiftError;
+        } else {
+          const { error: shiftError } = await supabase.rpc('shift_menu_category_range_down', {
+            mid: menuId,
+            from_position: oldPos + 1,
+            to_position: requestedPos
+          });
+          if (shiftError) throw shiftError;
+        }
+      }
+    }
+
+    const updateData = { name: name.trim() };
+    if (position !== undefined && position !== null && position !== '') {
+      updateData.position = parseInt(position, 10);
+    }
+
+    if (file) {
+      const imageUrl = await uploadImage(file.buffer, file.originalname, file.mimetype);
+      updateData.image = imageUrl;
+      if (existingCategory.image) await deleteImage(existingCategory.image);
+    }
+
+    const { data, error } = await supabase
+      .from('categories')
+      .update(updateData)
+      .eq('id', categoryId)
+      .select()
+      .single();
+
+    if (error) {
+      if (updateData.image) await deleteImage(updateData.image);
+      throw error;
+    }
+
+    res.status(200).json({ success: true, message: 'Category updated successfully', data });
   } catch (error) {
-    console.error('Delete menu error:', error);
+    console.error('Update menu category error:', error);
+    next(error);
+  }
+};
+
+// Delete a category from its menu
+const deleteMenuCategory = async (req, res, next) => {
+  try {
+    const { menuId, categoryId } = req.params;
+
+    const { data: existingCategory, error: checkError } = await supabase
+      .from('categories')
+      .select('*')
+      .eq('id', categoryId)
+      .eq('menu_id', menuId)
+      .single();
+
+    if (checkError || !existingCategory) {
+      return res.status(404).json({ success: false, message: 'Category not found in this menu' });
+    }
+
+    const deletedPosition = existingCategory.position;
+
+    const { error } = await supabase.from('categories').delete().eq('id', categoryId);
+    if (error) throw error;
+
+    if (existingCategory.image) await deleteImage(existingCategory.image);
+
+    if (deletedPosition) {
+      const { error: shiftError } = await supabase.rpc('shift_menu_category_positions_down', {
+        mid: menuId,
+        from_position: deletedPosition
+      });
+      if (shiftError) throw shiftError;
+    }
+
+    res.status(200).json({ success: true, message: 'Category deleted successfully' });
+  } catch (error) {
+    console.error('Delete menu category error:', error);
     next(error);
   }
 };
@@ -273,5 +503,8 @@ module.exports = {
   getMenuById,
   createMenu,
   updateMenu,
-  deleteMenu
+  deleteMenu,
+  createMenuCategory,
+  updateMenuCategory,
+  deleteMenuCategory
 };

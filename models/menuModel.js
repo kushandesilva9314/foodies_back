@@ -4,6 +4,7 @@ class Menu {
     this.id = data.id;
     this.name = data.name;
     this.image = data.image;
+    this.position = data.position;
     this.created_at = data.created_at;
     this.updated_at = data.updated_at;
   }
@@ -26,6 +27,15 @@ class Menu {
       errors.push('Menu image is required');
     }
 
+    // Check position (optional at this layer — controller decides
+    // the valid range since it depends on how many menus exist)
+    if (data.position !== undefined && data.position !== null && data.position !== '') {
+      const posNum = parseInt(data.position, 10);
+      if (isNaN(posNum) || posNum < 1 || !Number.isInteger(Number(data.position))) {
+        errors.push('Position must be a positive whole number');
+      }
+    }
+
     return {
       isValid: errors.length === 0,
       errors
@@ -34,10 +44,16 @@ class Menu {
 
   // Sanitize data before saving
   static sanitize(data) {
-    return {
+    const sanitized = {
       name: data.name?.trim(),
       image: data.image
     };
+
+    if (data.position !== undefined && data.position !== null && data.position !== '') {
+      sanitized.position = parseInt(data.position, 10);
+    }
+
+    return sanitized;
   }
 }
 
